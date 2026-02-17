@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"log"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -12,6 +13,15 @@ import (
 const defaultMaxTokens int64 = 8192
 
 func buildParams(modelName string, req *model.LLMRequest) anthropic.MessageNewParams {
+	log.Printf("buildParams called with %d content(s)", len(req.Contents))
+	for i, c := range req.Contents {
+		log.Printf("  content[%d] role=%s parts=%d", i, c.Role, len(c.Parts))
+		for j, p := range c.Parts {
+			log.Printf("    part[%d]: text=%q hasFuncCall=%v hasFuncResp=%v",
+				j, p.Text, p.FunctionCall != nil, p.FunctionResponse != nil)
+		}
+	}
+
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(modelName),
 		MaxTokens: defaultMaxTokens,
@@ -94,6 +104,7 @@ func partsToBlocks(parts []*genai.Part) []anthropic.ContentBlockParamUnion {
 				p.FunctionCall.Name,
 			))
 		case p.FunctionResponse != nil:
+			log.Printf("FunctionResponse ID: %q, Name: %q", p.FunctionResponse.ID, p.FunctionResponse.Name)
 			content, _ := json.Marshal(p.FunctionResponse.Response)
 			blocks = append(blocks, anthropic.NewToolResultBlock(
 				p.FunctionResponse.ID,
