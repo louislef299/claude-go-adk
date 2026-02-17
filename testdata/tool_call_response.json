@@ -1,0 +1,18 @@
+{
+  "id": "msg_test_tool",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {"type": "text", "text": "I'll look up the spots for you."},
+    {
+      "type": "tool_use",
+      "id": "toolu_01A",
+      "name": "get_spots_of_interest",
+      "input": {"name": "all"}
+    }
+  ],
+  "model": "claude-sonnet-4-5-20250929",
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {"input_tokens": 50, "output_tokens": 30}
+}

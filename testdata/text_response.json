@@ -1,0 +1,10 @@
+{
+  "id": "msg_test_text",
+  "type": "message",
+  "role": "assistant",
+  "content": [{"type": "text", "text": "Paris"}],
+  "model": "claude-sonnet-4-5-20250929",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {"input_tokens": 14, "output_tokens": 3}
+}
