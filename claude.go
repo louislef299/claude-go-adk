@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"log"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -12,24 +13,31 @@ import (
 )
 
 type claudeModel struct {
-	name   string
-	client anthropic.Client
+	name          string
+	client        anthropic.Client
+	logger        *log.Logger
+	anthropicOpts []option.RequestOption
 }
 
 // NewModel returns a model.LLM backed by the Anthropic Messages API.
 // By default it reads ANTHROPIC_API_KEY from the environment.
-// Pass option.WithAPIKey or option.WithHTTPClient to override.
-func NewModel(modelName string, opts ...option.RequestOption) model.LLM {
-	return &claudeModel{
+// Use AnthropicOption to pass Anthropic SDK options, and WithDebug to enable logging.
+func NewModel(modelName string, opts ...Option) model.LLM {
+	m := &claudeModel{
 		name:   modelName,
-		client: anthropic.NewClient(opts...),
+		logger: newLogger(),
 	}
+	for _, o := range opts {
+		o(m)
+	}
+	m.client = anthropic.NewClient(m.anthropicOpts...)
+	return m
 }
 
 func (m *claudeModel) Name() string { return m.name }
 
 func (m *claudeModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
-	params := buildParams(m.name, req)
+	params := m.buildParams(req)
 	if stream {
 		return m.generateStream(ctx, params)
 	}
@@ -39,7 +47,7 @@ func (m *claudeModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 			yield(nil, fmt.Errorf("claude: %w", err))
 			return
 		}
-		yield(messageToLLMResponse(msg), nil)
+		yield(m.messageToLLMResponse(msg), nil)
 	}
 }
 
@@ -74,7 +82,7 @@ func (m *claudeModel) generateStream(ctx context.Context, params anthropic.Messa
 			return
 		}
 		// Yield the fully accumulated response.
-		resp := messageToLLMResponse(&msg)
+		resp := m.messageToLLMResponse(&msg)
 		resp.TurnComplete = true
 		yield(resp, nil)
 	}

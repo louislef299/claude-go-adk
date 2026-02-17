@@ -12,20 +12,20 @@ import (
 
 const defaultMaxTokens int64 = 8192
 
-func buildParams(modelName string, req *model.LLMRequest) anthropic.MessageNewParams {
-	log.Printf("buildParams called with %d content(s)", len(req.Contents))
+func (m *claudeModel) buildParams(req *model.LLMRequest) anthropic.MessageNewParams {
+	m.logger.Printf("buildParams called with %d content(s)", len(req.Contents))
 	for i, c := range req.Contents {
-		log.Printf("  content[%d] role=%s parts=%d", i, c.Role, len(c.Parts))
+		m.logger.Printf("  content[%d] role=%s parts=%d", i, c.Role, len(c.Parts))
 		for j, p := range c.Parts {
-			log.Printf("    part[%d]: text=%q hasFuncCall=%v hasFuncResp=%v",
+			m.logger.Printf("    part[%d]: text=%q hasFuncCall=%v hasFuncResp=%v",
 				j, p.Text, p.FunctionCall != nil, p.FunctionResponse != nil)
 		}
 	}
 
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(modelName),
+		Model:     anthropic.Model(m.name),
 		MaxTokens: defaultMaxTokens,
-		Messages:  contentsToMessages(req.Contents),
+		Messages:  contentsToMessages(req.Contents, m.logger),
 	}
 	if req.Config == nil {
 		return params
@@ -47,7 +47,7 @@ func buildParams(modelName string, req *model.LLMRequest) anthropic.MessageNewPa
 	if len(req.Config.StopSequences) > 0 {
 		params.StopSequences = req.Config.StopSequences
 	}
-	if tools := extractTools(req.Config.Tools); len(tools) > 0 {
+	if tools := m.extractTools(req.Config.Tools); len(tools) > 0 {
 		params.Tools = tools
 		params.ToolChoice = anthropic.ToolChoiceUnionParam{
 			OfAuto: &anthropic.ToolChoiceAutoParam{
@@ -72,13 +72,13 @@ func systemFromContent(c *genai.Content) []anthropic.TextBlockParam {
 	return []anthropic.TextBlockParam{{Type: "text", Text: strings.Join(parts, "\n")}}
 }
 
-func contentsToMessages(contents []*genai.Content) []anthropic.MessageParam {
+func contentsToMessages(contents []*genai.Content, logger *log.Logger) []anthropic.MessageParam {
 	var msgs []anthropic.MessageParam
 	for _, c := range contents {
 		if c == nil {
 			continue
 		}
-		blocks := partsToBlocks(c.Parts)
+		blocks := partsToBlocks(c.Parts, logger)
 		if len(blocks) == 0 {
 			continue
 		}
@@ -91,7 +91,7 @@ func contentsToMessages(contents []*genai.Content) []anthropic.MessageParam {
 	return msgs
 }
 
-func partsToBlocks(parts []*genai.Part) []anthropic.ContentBlockParamUnion {
+func partsToBlocks(parts []*genai.Part, logger *log.Logger) []anthropic.ContentBlockParamUnion {
 	var blocks []anthropic.ContentBlockParamUnion
 	for _, p := range parts {
 		switch {
@@ -104,8 +104,9 @@ func partsToBlocks(parts []*genai.Part) []anthropic.ContentBlockParamUnion {
 				p.FunctionCall.Name,
 			))
 		case p.FunctionResponse != nil:
-			log.Printf("FunctionResponse ID: %q, Name: %q", p.FunctionResponse.ID, p.FunctionResponse.Name)
 			content, _ := json.Marshal(p.FunctionResponse.Response)
+			logger.Printf("FunctionResponse ID: %q, Name: %q, Content: %s",
+				p.FunctionResponse.ID, p.FunctionResponse.Name, string(content))
 			blocks = append(blocks, anthropic.NewToolResultBlock(
 				p.FunctionResponse.ID,
 				string(content),
@@ -116,18 +117,38 @@ func partsToBlocks(parts []*genai.Part) []anthropic.ContentBlockParamUnion {
 	return blocks
 }
 
-func extractTools(tools []*genai.Tool) []anthropic.ToolUnionParam {
+func (m *claudeModel) extractTools(tools []*genai.Tool) []anthropic.ToolUnionParam {
 	var result []anthropic.ToolUnionParam
 	for _, t := range tools {
 		for _, fd := range t.FunctionDeclarations {
-			schema := schemaToMap(fd.Parameters)
-			inputSchema := anthropic.ToolInputSchemaParam{
-				Type:       "object",
-				Properties: schema["properties"],
+			inputSchema := anthropic.ToolInputSchemaParam{Type: "object"}
+
+			if fd.Parameters != nil {
+				schema := schemaToMap(fd.Parameters)
+				inputSchema.Properties = schema["properties"]
+				if req, ok := schema["required"].([]string); ok {
+					inputSchema.Required = req
+				}
+			} else if fd.ParametersJsonSchema != nil {
+				// functiontool uses ParametersJsonSchema (raw JSON) instead of
+				// Parameters
+				schemaBytes, _ := json.Marshal(fd.ParametersJsonSchema)
+				m.logger.Printf("ParametersJsonSchema for %q: %s", fd.Name, schemaBytes)
+				var schemaMap map[string]any
+				if err := json.Unmarshal(schemaBytes, &schemaMap); err == nil {
+					inputSchema.Properties = schemaMap["properties"]
+					if raw, ok := schemaMap["required"].([]any); ok {
+						required := make([]string, 0, len(raw))
+						for _, r := range raw {
+							if s, ok := r.(string); ok {
+								required = append(required, s)
+							}
+						}
+						inputSchema.Required = required
+					}
+				}
 			}
-			if req, ok := schema["required"].([]string); ok {
-				inputSchema.Required = req
-			}
+
 			result = append(result, anthropic.ToolUnionParam{
 				OfTool: &anthropic.ToolParam{
 					Name:        fd.Name,
@@ -167,7 +188,15 @@ func schemaToMap(s *genai.Schema) map[string]any {
 	return m
 }
 
-func messageToLLMResponse(msg *anthropic.Message) *model.LLMResponse {
+func (m *claudeModel) messageToLLMResponse(msg *anthropic.Message) *model.LLMResponse {
+	m.logger.Printf("messageToLLMResponse: stop_reason=%s, content blocks=%d", msg.StopReason, len(msg.Content))
+	for i, block := range msg.Content {
+		m.logger.Printf("  block[%d]: type=%s", i, block.Type)
+		if block.Type == "text" {
+			m.logger.Printf("    text=%q", block.Text)
+		}
+	}
+
 	var parts []*genai.Part
 	for _, block := range msg.Content {
 		switch block.Type {

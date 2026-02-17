@@ -28,8 +28,8 @@ func testModel(t *testing.T, file string, contentType string) model.LLM {
 	ts := testServer(t, file, contentType)
 	t.Cleanup(ts.Close)
 	return NewModel("claude-sonnet-4-5-20250929",
-		option.WithBaseURL(ts.URL),
-		option.WithAPIKey("test-key"),
+		AnthropicOption(option.WithBaseURL(ts.URL)),
+		AnthropicOption(option.WithAPIKey("test-key")),
 	)
 }
 
@@ -219,7 +219,7 @@ func TestConvert_toolResultInRequest(t *testing.T) {
 			ID: "toolu_01A", Name: "get_spots", Response: map[string]any{"result": "Ocean Beach"},
 		}}}},
 	}
-	msgs := contentsToMessages(contents)
+	msgs := contentsToMessages(contents, newLogger())
 	if len(msgs) != 3 {
 		t.Fatalf("got %d messages, want 3", len(msgs))
 	}
